@@ -127,7 +127,7 @@ def train(rank, a, h):
             y = y.unsqueeze(1)
             
             #forward
-            l = encoder(x.to(device))
+            l, commit_loss = encoder(x.to(device))
             
             y_g_hat = generator(l)
 
@@ -164,7 +164,7 @@ def train(rank, a, h):
             loss_fm_s = feature_loss(fmap_s_r, fmap_s_g)
             loss_gen_f, losses_gen_f = generator_loss(y_df_hat_g)
             loss_gen_s, losses_gen_s = generator_loss(y_ds_hat_g)
-            loss_gen_all = loss_gen_s + loss_gen_f + loss_fm_s + loss_fm_f + loss_mel + loss_wav
+            loss_gen_all = loss_gen_s + loss_gen_f + loss_fm_s + loss_fm_f + loss_mel + loss_wav + commit_loss
 
             loss_gen_all.backward()
             optim_g.step()
@@ -210,7 +210,7 @@ def train(rank, a, h):
                         for j, batch in enumerate(validation_loader):
                             x, y, _, y_mel = batch
                                     
-                            l = encoder(x.to(device))                    
+                            l, commit_loss = encoder(x.to(device))
                             y_g_hat = generator(l)
 
                             y_mel = torch.autograd.Variable(y_mel.to(device, non_blocking=True))

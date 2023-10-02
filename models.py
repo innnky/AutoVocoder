@@ -3,10 +3,26 @@ import torch.nn.functional as F
 import torch.nn as nn
 from torch.nn import Conv1d, ConvTranspose1d, AvgPool1d, Conv2d, BatchNorm2d
 from torch.nn.utils import weight_norm, remove_weight_norm, spectral_norm
+
+from quantize import ResidualVectorQuantizer
 from utils import init_weights, get_padding
 from stft import TorchSTFT
 
 LRELU_SLOPE = 0.1
+
+class LayerNorm(nn.Module):
+  def __init__(self, channels, eps=1e-5):
+    super().__init__()
+    self.channels = channels
+    self.eps = eps
+
+    self.gamma = nn.Parameter(torch.ones(channels))
+    self.beta = nn.Parameter(torch.zeros(channels))
+
+  def forward(self, x):
+    x = x.transpose(1, -1)
+    x = F.layer_norm(x, (self.channels,), self.gamma, self.beta, self.eps)
+    return x.transpose(1, -1)
 
 
 class ResBlock(torch.nn.Module):
@@ -44,8 +60,14 @@ class Encoder(torch.nn.Module):
                 self.encs.append(ResBlock(1,1))
                 
         self.linear = nn.Linear(h.win_size//2+1,h.latent_dim)
-        self.dropout = nn.Dropout(h.latent_dropout)
-    
+        self.norm = LayerNorm(h.latent_dim)
+        self.quantizer = ResidualVectorQuantizer(
+            dimension=h.latent_dim,
+            n_q=h.n_q,
+            bins=h.bins
+        )
+
+
     def forward(self, x):
         # x: (B, 4, N, T)
         for enc_block in self.encs:
@@ -53,11 +75,13 @@ class Encoder(torch.nn.Module):
         
         x = x.squeeze(1).transpose(1,2) # (B, 1, N, T) -> (B, T, N)
         x = self.linear(x)
+        x = x.transpose(1,2)
         #! Apply dropout (according to DAE) to increase decoder robustness,
         #! because representation predicted from AM is used in TTS application.
-        x = self.dropout(x)
-        
-        return x
+        x = self.norm(x)
+        quantized, codes, commit_loss, quantized_list = self.quantizer(x)
+
+        return quantized, commit_loss
     
 class Generator(torch.nn.Module):
     def __init__(self, h):
